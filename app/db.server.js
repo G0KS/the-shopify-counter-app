@@ -1,11 +1,25 @@
-import { PrismaClient } from "@prisma/client";
+import mongoose from "mongoose";
 
-if (process.env.NODE_ENV !== "production") {
-  if (!global.prismaGlobal) {
-    global.prismaGlobal = new PrismaClient();
-  }
+const MONGODB_URI = process.env.MONGODB_URI;
+
+if (!MONGODB_URI) {
+  throw new Error("No MONGODB_URI environment variable found. Please add one to .env");
 }
 
-const prisma = global.prismaGlobal ?? new PrismaClient();
+let cached = global.mongoose;
 
-export default prisma;
+if (!cached) {
+  cached = global.mongoose = { conn: null, promise: null };
+}
+
+async function connectDB() {
+  if (cached.conn) return cached.conn;
+
+  if (!cached.promise) {
+    cached.promise = mongoose.connect(MONGODB_URI).then((m) => m);
+  }
+  cached.conn = await cached.promise;
+  return cached.conn;
+}
+
+export default connectDB;
