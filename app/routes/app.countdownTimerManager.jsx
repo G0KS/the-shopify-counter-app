@@ -1,63 +1,114 @@
-import { Form, useSubmit } from "react-router";
+import { Form, useActionData, useLoaderData, useSubmit } from "react-router";
 import { authenticate } from "../shopify.server";
 import connectDB from "../db.server";
-// import { Timer } from "../models/Timer.server";
+import { Timer } from "../models/Timer.server";
+import { useAppBridge } from "@shopify/app-bridge-react";
+import { useEffect } from "react";
+
+export const loader = async ({ request }) => {
+  const { session } = await authenticate.admin(request);
+  await connectDB();
+
+  const timers = await Timer.find({ shop: session.shop })
+    .sort({ createdAt: -1 })
+    .lean();
+
+  return { timers };
+};
 
 export const action = async ({ request }) => {
   const { session } = await authenticate.admin(request);
   await connectDB();
   const formData = await request.formData();
-
-  console.log("📥 Incoming Timer Data:", Object.fromEntries(formData));
+  const startTime = formData.get("startTime") || "00:00:00";
+  const endTime = formData.get("endTime") || "23:59:59";
 
   const timerData = {
     shop: session.shop,
-    name: formData.get("timerName"),
-    startDate: `${formData.get("startDate")}T${formData.get("startTime")}`,
-    endDate: `${formData.get("endDate")}T${formData.get("endTime")}`,
+    title: formData.get("title"),
+    startDate: new Date(`${formData.get("startDate")}T${startTime}:00`),
+    endDate: new Date(`${formData.get("endDate")}T${endTime}:00`),
     description: formData.get("description"),
     color: formData.get("color"),
-    size: formData.get("size"),
-    position: formData.get("position"),
-    urgency: formData.get("urgency").toUpperCase(),
+    size: formData.get("size")?.toUpperCase(),
+    position: formData.get("position")?.toUpperCase(),
+    urgency: formData.get("urgency")?.toUpperCase(),
   };
 
-
-  console.log(timerData);
-  
   // Save to MongoDB
-  // await Timer.create(timerData);
+  try {
+    await Timer.create(timerData);
+  } catch (error) {
+    console.error(error);
+  }
 
   return { success: true };
 };
 
 export default function CountdownTimerManager() {
+  const shopify = useAppBridge();
+  const actionData = useActionData();
+  const { timers } = useLoaderData();
+
   const submit = useSubmit();
   const handleSave = () => {
     const form = document.getElementById("create-timer-form");
-    if (form) submit(form); 
+    if (form) {
+      submit(form, { method: "post" });
+    }
   };
+
+  useEffect(() => {
+    if (actionData?.success) {
+      shopify.toast.show("Timer created successfully");
+    }
+  }, [actionData, shopify]);
+
+  console.log(timers);
 
   return (
     <s-page heading="Countdown Timer Manager">
       <s-button slot="primary-action" commandFor="modal">
         + Create Timer
       </s-button>
-      <s-section>
+      <s-section gap="base" padding="base-2">
         <s-search-field
           label="Search timers"
-          name="timerSearch"
+          name="title"
           onInput={(e) => console.log("Search for:", e.target.value)}
         ></s-search-field>
         <s-grid gridTemplateColumns="repeat(12, 1fr)" gap="base">
           <s-grid-item gridColumn="span 3">
-            <s-select label="Sort timers by" value="newest">
+            <s-select
+              label="Sort timers by"
+              placeholder="Select sorting method"
+              value="newest"
+            >
               <s-option value="newest">Newest first</s-option>
               <s-option value="oldest">Oldest first</s-option>
             </s-select>
           </s-grid-item>
         </s-grid>
         <s-divider color="strong"></s-divider>
+        <s-stack gap="base">
+          {timers.map((timer) => (
+            <s-box
+              key={timer._id}
+              padding="base"
+              border="base"
+              borderRadius="base"
+            >
+              <s-paragraph type="strong">
+                <s-heading type="strong">{timer.title}</s-heading>
+              </s-paragraph>
+              <s-text variant="bodyMd" tone="subdued">
+                {new Date(timer.startDate).toLocaleString()} -{" "}
+                {new Date(timer.endDate).toLocaleString()}
+              </s-text>
+              <s-text variant="bodyMd">{timer.description}</s-text>
+            </s-box>
+          ))}
+        </s-stack>
       </s-section>
 
       {/* Modal for the timer */}
@@ -65,7 +116,6 @@ export default function CountdownTimerManager() {
         <Form method="POST" id="create-timer-form">
           <s-box padding="base">
             <s-stack gap="base">
-              {/* Timer Name */}
               <s-text-field
                 label="Timer name"
                 name="title"
@@ -73,7 +123,6 @@ export default function CountdownTimerManager() {
                 required
               ></s-text-field>
 
-              {/* Start Date & Time Row */}
               <s-grid gridTemplateColumns="repeat(2, 1fr)" gap="base">
                 <s-date-field
                   label="Start Date"
@@ -87,12 +136,8 @@ export default function CountdownTimerManager() {
                 ></s-text-field>
               </s-grid>
 
-              {/* End Date & Time Row */}
               <s-grid gridTemplateColumns="repeat(2, 1fr)" gap="base">
-                <s-date-field
-                  label="End Date"
-                  name="endDate"
-                ></s-date-field>
+                <s-date-field label="End Date" name="endDate"></s-date-field>
                 <s-text-field
                   label="End time"
                   name="endTime"
@@ -101,7 +146,6 @@ export default function CountdownTimerManager() {
                 ></s-text-field>
               </s-grid>
 
-              {/* Description */}
               <s-text-area
                 label="Promotion description"
                 name="description"
@@ -110,10 +154,7 @@ export default function CountdownTimerManager() {
               ></s-text-area>
 
               <s-box padding="large" border="base" borderRadius="base">
-                <s-color-picker
-                  value="#0f0f"
-                  name="color"
-                ></s-color-picker>
+                <s-color-picker value="#0f0f" name="color"></s-color-picker>
               </s-box>
 
               <s-grid gridTemplateColumns="repeat(2, 1fr)" gap="base">
@@ -131,10 +172,10 @@ export default function CountdownTimerManager() {
               <s-select
                 label="Urgency notification"
                 name="urgency"
-                value="Color pulse"
+                value="Color_pulse"
               >
                 <s-option value="None">None</s-option>
-                <s-option value="Color pulse">Color pulse</s-option>
+                <s-option value="Color_pulse">Color pulse</s-option>
                 <s-option value="Shake">Shake</s-option>
               </s-select>
             </s-stack>
