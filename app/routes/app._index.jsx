@@ -1,13 +1,16 @@
+import connectDB from "../db.server";
 import { useEffect } from "react";
 import { useFetcher } from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
+import { Timer } from "../models/Timer.server";
 
 export const loader = async ({ request }) => {
-  await authenticate.admin(request);
-
-  return null;
+ const { session } = await authenticate.admin(request);
+ await connectDB();
+  const timer = await Timer.findOne({ shop: session.shop });
+  return { timer };
 };
 
 export const action = async ({ request }) => {
