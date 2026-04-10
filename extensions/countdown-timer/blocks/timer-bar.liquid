@@ -1,0 +1,91 @@
+<div id="countdown-root" 
+     data-shop="{{ shop.permanent_domain }}" 
+     data-product-id="{{ product.id }}"
+     style="display: none;">
+  <div class="timer-card" style="border: 2px solid #ddd; border-radius: 8px; padding: 20px; text-align: center; margin: 20px 0;">
+    <h3 id="timer-title" style="margin-top: 0;"></h3>
+    <div id="countdown-clock" style="font-size: 2.5rem; font-weight: bold; font-family: monospace;">
+      00:00:00
+    </div>
+    <p id="timer-description" style="font-size: 14px; color: #666;"></p>
+  </div>
+</div>
+
+<script>
+  (async function() {
+    const root = document.getElementById('countdown-root');
+    const { shop, productId } = root.dataset;
+
+    try {
+      const response = await fetch(`/apps/timer-logic/api/proxy?shop=${shop}&productId=${productId}`);
+      const timer = await response.json();
+
+      if (!timer || !timer._id) return;
+
+      root.style.display = 'block';
+      document.getElementById('timer-title').innerText = timer.title;
+      document.getElementById('timer-description').innerText = timer.description || '';
+      root.querySelector('.timer-card').style.borderColor = timer.color || '#000';
+
+      let endTime;
+
+
+      if (timer.timer_type === 'EVERGREEN') {
+        const timerId = typeof timer._id === 'object' ? timer._id.$oid : timer._id;
+        const storageKey = `timer_start_${timerId}`;
+        let startTime = localStorage.getItem(storageKey);
+
+        if (!startTime) {
+          startTime = Date.now();
+          localStorage.setItem(storageKey, startTime);
+        }
+
+        const durationMins = parseInt(timer.ev_duration) || 1440;
+        endTime = parseInt(startTime) + (durationMins * 60 * 1000);
+      } else {
+        endTime = new Date(timer.endDate).getTime();
+      }
+
+      const updateClock = () => {
+        const now = Date.now();
+        const diff = endTime - now;
+
+        const clock = document.getElementById('countdown-clock');
+        if (diff <= 0) {
+          clock.innerHTML = "00:00:00";
+          root.style.transition = "opacity 0.5s ease";
+          root.style.opacity = "0";
+          setTimeout(() => {
+            root.style.display = "none";
+          }, 500);
+
+          if (timer.timer_type === 'EVERGREEN') {
+            const timerId = typeof timer._id === 'object' ? timer._id.$oid : timer._id;
+            localStorage.removeItem(`timer_start_${timerId}`);
+          }
+          return;
+        }
+
+        const h = Math.floor(diff / 3600000).toString().padStart(2, '0');
+        const m = Math.floor((diff % 3600000) / 60000).toString().padStart(2, '0');
+        const s = Math.floor((diff % 60000) / 1000).toString().padStart(2, '0');
+        clock.innerHTML = `${h}:${m}:${s}`;
+        requestAnimationFrame(updateClock); 
+      };
+
+      updateClock();
+    } catch (e) {
+      console.error("Timer Widget Error:", e); 
+    }
+  })();
+</script>
+
+{% schema %}
+{
+  "name": "Countdown Timer",
+  "target": "section",
+  "enabled_on": {
+    "templates": ["product"]
+  }
+}
+{% endschema %}
