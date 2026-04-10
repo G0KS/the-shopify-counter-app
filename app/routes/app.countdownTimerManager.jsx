@@ -10,9 +10,14 @@ export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
   await connectDB();
 
-  const timers = await Timer.find({ shop: session.shop })
+  const rawTimers = await Timer.find({ shop: session.shop })
     .sort({ createdAt: -1 })
     .lean();
+
+  const timers = rawTimers.map((timer) => ({
+    ...timer,
+    _id: timer._id.toString(),
+  }));
 
   return { timers };
 };
@@ -22,20 +27,28 @@ export const action = async ({ request }) => {
   await connectDB();
   const formData = await request.formData();
 
-  // 1. Precise Date Parsing
-  const startRaw = formData.get("startDate");
+  const intent = formData.get("intent").toUpperCase();
+  const id = formData.get("id");
+
+  if (intent === "DELETE" && id) {
+    await Timer.deleteOne({ _id: id, shop: session.shop });
+    return {
+      success: true,
+      method: "delete",
+      message: "Timer deleted successfully",
+    };
+  }
+
+  const startRaw =
+    formData.get("startDate") || new Date().toISOString().split("T")[0];
   const startTime = formData.get("startTime") || "00:00";
-  const endRaw = formData.get("endDate");
+  const endRaw =
+    formData.get("endDate") || new Date().toISOString().split("T")[0];
   const endTime = formData.get("endTime") || "00:00";
 
-  const startDate = startRaw
-    ? new Date(`${startRaw}T${startTime}:00`)
-    : new Date();
-  const endDate = endRaw
-    ? new Date(`${endRaw}T${endTime}:00`)
-    : new Date(Date.now() + 86400000);
+  const startDate = new Date(`${startRaw}T${startTime}:00`);
+  const endDate = new Date(`${endRaw}T${endTime}:00`);
 
-  // Stop if dates are invalid
   if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
     return { success: false, error: "Invalid date format." };
   }
@@ -46,6 +59,7 @@ export const action = async ({ request }) => {
     timer_type: formData.get("timer_type"),
     startDate,
     endDate,
+    endTime,
     ev_duration: parseInt(formData.get("ev_duration") || "0"),
     description: formData.get("description") || "",
     color: formData.get("color") || "#000000",
@@ -58,11 +72,13 @@ export const action = async ({ request }) => {
     },
   };
 
-  console.log("here", formData.get("targetIds"));
-
   // Save to MongoDB
   try {
-    await Timer.create(timerData);
+    if (intent === "UPDATE" && id) {
+      await Timer.findOneAndUpdate({ _id: id, shop: session.shop }, timerData);
+    } else {
+      await Timer.create(timerData);
+    }
   } catch (error) {
     console.error("MongoDB Error:", error);
   }
@@ -107,9 +123,19 @@ export const action = async ({ request }) => {
   });
 
   const result = await metafieldResponse.json();
-  console.log("✅ Final Sync Result:", JSON.stringify(result, null, 2));
+  if (result.errors || result.data.metafieldsSet.userErrors.length > 0) {
+    console.error(
+      "Shopify API Error:",
+      result.errors || result.data.metafieldsSet.userErrors,
+    );
+    return { success: false, error: "Failed to update Shopify metafield." };
+  }
 
-  return { success: true };
+  return {
+    success: true,
+    method: intent,
+    message: `Timer ${intent === "UPDATE" ? "updated" : "created"} successfully`,
+  };
 };
 
 export default function CountdownTimerManager() {
@@ -121,6 +147,40 @@ export default function CountdownTimerManager() {
   const [selectedIds, setSelectedIds] = useState([]);
   const [applyType, setApplyType] = useState("PRODUCT");
   const [timerType, setTimerType] = useState("FIXED");
+  const [editingTimer, setEditingTimer] = useState(null);
+  const [isOpen, setIsOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+
+  const getCleanId = (timer) => {
+    if (!timer || !timer._id) return "";
+    if (timer._id.buffer) {
+      return Array.from(new Uint8Array(Object.values(timer._id.buffer)))
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join("");
+    }
+    return timer._id.$oid || timer._id.toString();
+  };
+
+  const handleEdit = (timer) => {
+    setEditingTimer(timer);
+    setTimerType(timer.timer_type);
+    setApplyType(timer.targeting?.applyTo || "PRODUCT");
+    setSelectedIds(timer.targeting.targetIds);
+  };
+
+  useEffect(() => {
+    if (editingTimer) {
+      setIsOpen(true);
+    }
+  }, [editingTimer]);
+
+  const handleDelete = (timer) => {
+    const timerId = getCleanId(timer);
+
+    if (confirm(`Are you sure you want to delete "${timer.title}"?`)) {
+      submit({ id: timerId, intent: "DELETE" }, { method: "POST" });
+    }
+  };
 
   const selectProducts = async () => {
     const selection = await shopify.resourcePicker({
@@ -140,18 +200,26 @@ export default function CountdownTimerManager() {
   const handleSave = () => {
     const form = document.getElementById("create-timer-form");
     if (form) {
-      submit(form, { method: "post" });
+      const formData = new FormData(form);
+      const timerId = getCleanId(editingTimer);
+      formData.set("id", timerId);
+      formData.set("intent", editingTimer ? "UPDATE" : "CREATE");
+      submit(formData, { method: "POST" });
     }
   };
 
   useEffect(() => {
     if (actionData?.success) {
-      shopify.toast.show("Timer created successfully");
+      shopify.toast.show(actionData?.message);
       formRef.current?.reset();
       setSelectedIds([]);
       setTimerType("FIXED");
     }
   }, [actionData, shopify]);
+
+  const filteredTimers = timers.filter((timer) =>
+    timer.title?.toLowerCase().includes(searchQuery.toLowerCase()),
+  );
 
   return (
     <s-page heading="Countdown Timer Manager">
@@ -162,66 +230,151 @@ export default function CountdownTimerManager() {
         <s-search-field
           label="Search timers"
           name="title"
-          onInput={(e) => console.log("Search for:", e.target.value)}
+          value={searchQuery}
+          onInput={(e) => setSearchQuery(e.target.value)}
         ></s-search-field>
-        <s-grid gridTemplateColumns="repeat(12, 1fr)" gap="base">
-          <s-grid-item gridColumn="span 3">
-            <s-select
-              label="Sort timers by"
-              placeholder="Select sorting method"
-              value="newest"
-            >
-              <s-option value="newest">Newest first</s-option>
-              <s-option value="oldest">Oldest first</s-option>
-            </s-select>
-          </s-grid-item>
-        </s-grid>
-        <s-divider color="strong"></s-divider>
         <s-stack gap="base">
-          {timers.map((timer) => (
-            <s-box
-              key={timer._id}
-              padding="base"
-              border="base"
-              borderRadius="base"
-            >
-              <s-heading type="strong">
-                {timer.title || "Untitled Timer"}
-              </s-heading>
-              <s-text variant="bodyMd" tone="subdued">
-                {timer.startDate
-                  ? new Date(timer.startDate).toLocaleString()
-                  : "No start date"}{" "}
-                -
-                {timer.endDate
-                  ? new Date(timer.endDate).toLocaleString()
-                  : "No end date"}
-              </s-text>
-              <s-text variant="bodyMd">
-                {timer.description || "No description provided."}
+          {filteredTimers.length > 0 ? (
+            filteredTimers.map((timer) => {
+              const stringId = timer._id.$oid || timer._id.toString();
+              const menuId = `menu-${stringId}`;
+              const isEvergreen = timer.timer_type === "EVERGREEN";
+
+              return (
+                <s-box
+                  key={stringId}
+                  padding="base"
+                  border="base"
+                  borderRadius="base"
+                  backgroundColor="surface"
+                >
+                  {/* Force Horizontal Layout with Flexbox */}
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "flex-start",
+                      width: "100%",
+                    }}
+                  >
+                    {/* LEFT SIDE: Info */}
+                    <div style={{ flex: "1" }}>
+                      <s-stack gap="tight">
+                        <div
+                          style={{
+                            display: "flex",
+                            gap: "8px",
+                            alignItems: "center",
+                          }}
+                        >
+                          <s-heading type="strong">
+                            {timer.title || "Untitled Timer"}
+                          </s-heading>
+                          <s-badge tone={isEvergreen ? "warning" : "info"}>
+                            {isEvergreen ? "Evergreen" : "Fixed"}
+                          </s-badge>
+                        </div>
+
+                        <s-text variant="bodySm" tone="subdued">
+                          {isEvergreen
+                            ? `Duration: ${timer.ev_duration} mins`
+                            : `${new Date(timer.startDate).toLocaleDateString()} - ${new Date(timer.endDate).toLocaleDateString()}`}
+                        </s-text>
+
+                        <s-text variant="bodyMd">
+                          {timer.description || "No description provided."}
+                        </s-text>
+
+                        <div
+                          style={{
+                            display: "flex",
+                            gap: "6px",
+                            alignItems: "center",
+                            marginTop: "4px",
+                          }}
+                        >
+                          <div
+                            style={{
+                              width: "10px",
+                              height: "10px",
+                              borderRadius: "50%",
+                              backgroundColor: timer.color || "#000",
+                            }}
+                          ></div>
+                          <s-text variant="bodyXs" tone="subdued">
+                            Theme Color
+                          </s-text>
+                        </div>
+                      </s-stack>
+                    </div>
+
+                    {/* RIGHT SIDE: Actions */}
+                    <div style={{ marginLeft: "16px" }}>
+                      <s-button commandFor={menuId} variant="tertiary">
+                        Actions
+                      </s-button>
+
+                      <s-menu id={menuId} accessibilityLabel="Timer actions">
+                        <s-button
+                          icon="edit"
+                          onClick={() => handleEdit(timer)}
+                          commandFor="modal"
+                        >
+                          Edit
+                        </s-button>
+                        <s-button
+                          icon="delete"
+                          tone="critical"
+                          onClick={() => handleDelete(timer)}
+                        >
+                          Delete
+                        </s-button>
+                      </s-menu>
+                    </div>
+                  </div>
+                </s-box>
+              );
+            })
+          ) : (
+            <s-box padding="base" textAlign="center">
+              <s-text tone="subdued">
+                No timers found matching "{searchQuery}"
               </s-text>
             </s-box>
-          ))}
+          )}
         </s-stack>
       </s-section>
 
       {/* Modal for the timer */}
-      <s-modal id="modal" heading="Create New Timer" variant="large">
-        <Form method="POST" id="create-timer-form" ref={formRef}>
+      <s-modal
+        id="modal"
+        heading={editingTimer ? "Edit Timer" : "Create New Timer"}
+        variant="large"
+        onShow={isOpen}
+        onHide={() => setEditingTimer(null)}
+      >
+        <Form
+          key={editingTimer ? getCleanId(editingTimer) : "new-timer"}
+          method="POST"
+          id="create-timer-form"
+          ref={formRef}
+        >
           <s-stack gap="base">
             <s-text-field
               label="Timer name"
               name="title"
               placeholder="Enter timer name"
+              defaultValue={editingTimer?.title || ""}
               required
             ></s-text-field>
 
-            {/* Requirement 4.1: Timer Type Selection */}
             <s-select
               label="Timer Type"
               name="timer_type"
               value={timerType}
+              defaultValue={editingTimer?.timer_type || "FIXED"}
               onInput={(e) => setTimerType(e.target.value)}
+              required
             >
               <s-option value="FIXED">Fixed (Global Schedule)</s-option>
               <s-option value="EVERGREEN">
@@ -229,15 +382,25 @@ export default function CountdownTimerManager() {
               </s-option>
             </s-select>
 
-            {/* Conditionally show Dates for FIXED or Duration for EVERGREEN */}
             {timerType === "FIXED" ? (
               <s-grid gridTemplateColumns="repeat(2, 1fr)" gap="base">
-                <s-date-field label="End Date" name="endDate"></s-date-field>
+                <s-date-field
+                  label="End Date"
+                  name="endDate"
+                  defaultValue={
+                    editingTimer?.endDate
+                      ? new Date(editingTimer.endDate)
+                          .toISOString()
+                          .split("T")[0]
+                      : ""
+                  }
+                ></s-date-field>
                 <s-text-field
                   label="End time"
                   name="endTime"
-                  type="time"
+                  type="string"
                   icon="clock"
+                  defaultValue={editingTimer?.endTime || "00:00"}
                 ></s-text-field>
               </s-grid>
             ) : (
@@ -245,6 +408,7 @@ export default function CountdownTimerManager() {
                 label="Evergreen Duration (Minutes)"
                 name="ev_duration"
                 type="number"
+                defaultValue={editingTimer?.ev_duration || 0}
                 placeholder="e.g., 1440 for 24 hours"
                 helpText="Timer starts when a user first visits and resets after this many minutes."
               ></s-text-field>
@@ -253,6 +417,7 @@ export default function CountdownTimerManager() {
             <s-text-area
               label="Promotion description"
               name="description"
+              defaultValue={editingTimer?.description || ""}
               placeholder="Enter a detailed description"
               autocomplete="off"
             ></s-text-area>
@@ -264,6 +429,7 @@ export default function CountdownTimerManager() {
                   label="Apply to"
                   name="applyTo"
                   value="PRODUCT"
+                  defaultValue={editingTimer?.targeting?.applyTo || "PRODUCT"}
                   onInput={(e) => setApplyType(e.target.value)}
                 >
                   <s-option value="ALL">All Products</s-option>
@@ -287,28 +453,53 @@ export default function CountdownTimerManager() {
                   name="targetIds"
                   value={JSON.stringify(selectedIds)}
                 />
+                <input
+                  type="hidden"
+                  name="id"
+                  value={getCleanId(editingTimer)}
+                />
+                <input
+                  type="hidden"
+                  name="intent"
+                  value={editingTimer ? "UPDATE" : "CREATE"}
+                />
               </s-stack>
             </s-box>
 
             <s-box padding="large" border="base" borderRadius="base">
               <s-text variant="headingSm">Appearance</s-text>
-              <s-color-picker value="#0f0f" name="color"></s-color-picker>
+              <s-color-picker
+                value="#0f0f"
+                defaultValue={editingTimer?.color || "#ffffff"}
+                name="color"
+              ></s-color-picker>
             </s-box>
 
-            {/* Size, Position, and Urgency remain as you had them */}
             <s-grid gridTemplateColumns="repeat(2, 1fr)" gap="base">
-              <s-select label="Timer size" name="size" value="MEDIUM">
+              <s-select
+                label="Timer size"
+                name="size"
+                value={editingTimer?.size || "MEDIUM"}
+              >
                 <s-option value="SMALL">Small</s-option>
                 <s-option value="MEDIUM">Medium</s-option>
                 <s-option value="LARGE">Large</s-option>
               </s-select>
-              <s-select label="Timer position" name="position" value="TOP">
+              <s-select
+                label="Timer position"
+                name="position"
+                value={editingTimer?.position || "TOP"}
+              >
                 <s-option value="TOP">Top</s-option>
                 <s-option value="BOTTOM">Bottom</s-option>
               </s-select>
             </s-grid>
 
-            <s-select label="Urgency notification" name="urgency" value="NONE">
+            <s-select
+              label="Urgency notification"
+              name="urgency"
+              value={editingTimer?.urgency || "NONE"}
+            >
               <s-option value="NONE">None</s-option>
               <s-option value="COLOR_PULSE">Color pulse</s-option>
               <s-option value="SHAKE">Shake</s-option>

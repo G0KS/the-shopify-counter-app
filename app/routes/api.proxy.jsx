@@ -6,9 +6,8 @@ export const loader = async ({ request }) => {
 
   const url = new URL(request.url);
   const shop = url.searchParams.get("shop");
-  const productId = url.searchParams.get("productId"); // We will pass this from Liquid
+  const productId = url.searchParams.get("productId"); 
 
-  // 1. Requirement 4.2: Find timer targeting this specific product
   const timer = await Timer.findOne({
     shop,
     $or: [
@@ -17,7 +16,6 @@ export const loader = async ({ request }) => {
     ],
   }).sort({ createdAt: -1 });
 
-  // 2. Requirement 4.3: Tracking Impressions
   if (timer) {
     await Timer.updateOne(
       { _id: timer._id },

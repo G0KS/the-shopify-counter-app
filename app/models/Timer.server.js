@@ -11,6 +11,7 @@ const timerSchema = new mongoose.Schema(
     },
     startDate: { type: Date, required: true },
     endDate: { type: Date },
+    endTime: { type: String },
     ev_duration: { type: Number },
     description: { type: String },
     color: { type: String, default: "#000000" },
@@ -40,5 +41,8 @@ const timerSchema = new mongoose.Schema(
   { timestamps: true },
 );
 
-export const Timer =
-  mongoose.models.Timer || mongoose.model("Timer", timerSchema);
+if (mongoose.models.Timer) {
+  delete mongoose.models.Timer;
+}
+
+export const Timer = mongoose.model("Timer", timerSchema);

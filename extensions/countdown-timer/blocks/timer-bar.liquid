@@ -1,18 +1,112 @@
-<div id="countdown-root" 
-     data-shop="{{ shop.permanent_domain }}" 
-     data-product-id="{{ product.id }}"
-     style="display: none;">
-  <div class="timer-card" style="border: 2px solid #ddd; border-radius: 8px; padding: 20px; text-align: center; margin: 20px 0;">
-    <h3 id="timer-title" style="margin-top: 0;"></h3>
-    <div id="countdown-clock" style="font-size: 2.5rem; font-weight: bold; font-family: monospace;">
-      00:00:00
+<style>
+  #timer-extension-wrapper {
+    width: 300px;
+    margin: 0;
+    padding: 0;
+    visibility: hidden; 
+  }
+
+  #countdown-root {
+    max-width: 100%;
+    margin: 1rem 0;
+  }
+
+  .timer-card {
+    background: #ffffff;
+    border-radius: 12px;
+    padding: 20px;
+    margin: 0 auto;
+    text-align: left;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    transition: all 0.3s ease, opacity 0.5s ease;
+    box-sizing: border-box;
+  }
+
+  #timer-title {
+    margin: 0 0 4px 0;
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: #202223;
+  }
+
+  #countdown-clock {
+    font-size: 2.2rem;
+    font-weight: 700;
+    font-family: 'Courier New', Courier, monospace;
+    margin: 8px 0;
+    line-height: 1;
+    display: inline-block;
+  }
+
+  #timer-description {
+    font-size: 13px;
+    color: #6d7175;
+    margin: 0;
+    line-height: 1.4;
+  }
+
+  .timer-size-SMALL .timer-card { 
+    width: 70%; 
+    padding: 12px; 
+  }
+  .timer-size-SMALL #countdown-clock { font-size: 1.5rem; }
+  .timer-size-SMALL #timer-title { font-size: 0.9rem; }
+
+  
+  .timer-size-MEDIUM .timer-card { 
+    width: 100%; 
+    padding: 20px; 
+  }
+  .timer-size-MEDIUM #countdown-clock { font-size: 2.2rem; }
+
+  
+  .timer-size-LARGE .timer-card { 
+    width: 100%; 
+    padding: 28px; 
+    border-width: 2px; 
+  }
+  .timer-size-LARGE #countdown-clock { font-size: 2.8rem; }
+  .timer-size-LARGE #timer-title { font-size: 1.3rem; }
+
+  .urgency-COLOR_PULSE {
+    animation: pulse-color 1.5s infinite;
+  }
+
+  .urgency-SHAKE {
+    animation: shake-element 0.5s infinite;
+  }
+
+  @keyframes pulse-color {
+    0% { opacity: 1; }
+    50% { opacity: 0.5; }
+    100% { opacity: 1; }
+  }
+
+  @keyframes shake-element {
+    0% { transform: translate(0, 0); }
+    25% { transform: translate(-2px, 1px); }
+    50% { transform: translate(2px, -1px); }
+    75% { transform: translate(-2px, -1px); }
+    100% { transform: translate(0, 0); }
+  }
+</style>
+
+<div id="timer-extension-wrapper">
+  <div id="countdown-root" 
+       data-shop="{{ shop.permanent_domain }}" 
+       data-product-id="{{ product.id }}">
+    <div class="timer-card">
+      <h3 id="timer-title"></h3>
+      <div id="countdown-clock">00:00:00</div>
+      <p id="timer-description"></p>
     </div>
-    <p id="timer-description" style="font-size: 14px; color: #666;"></p>
   </div>
 </div>
 
 <script>
   (async function() {
+    const wrapper = document.getElementById('timer-extension-wrapper');
     const root = document.getElementById('countdown-root');
     const { shop, productId } = root.dataset;
 
@@ -22,16 +116,38 @@
 
       if (!timer || !timer._id) return;
 
-      root.style.display = 'block';
       document.getElementById('timer-title').innerText = timer.title;
       document.getElementById('timer-description').innerText = timer.description || '';
-      root.querySelector('.timer-card').style.borderColor = timer.color || '#000';
+      
+      const card = root.querySelector('.timer-card');
+      const clock = document.getElementById('countdown-clock');
+      
+      card.classList.add(`timer-size-${timer.size}`);
+      clock.style.color = timer.color;
+      card.style.borderTop = `5px solid ${timer.color}`;
+
+      const productInfo = document.querySelector('.product__info-container') || 
+                          document.querySelector('.product-single__meta') || 
+                          document.querySelector('.product-info');
+      
+      const buyButtons = document.querySelector('.product-form__buttons') || 
+                         document.querySelector('form[action="/cart/add"]');
+
+      if (productInfo) {
+        if (timer.position === 'TOP') {
+          productInfo.prepend(wrapper);
+        } else if (timer.position === 'BOTTOM' && buyButtons) {
+          buyButtons.parentNode.insertBefore(wrapper, buyButtons.nextSibling);
+        } else {
+          productInfo.appendChild(wrapper);
+        }
+      }
+      
+      wrapper.style.visibility = 'visible';
 
       let endTime;
-
-
       if (timer.timer_type === 'EVERGREEN') {
-        const timerId = typeof timer._id === 'object' ? timer._id.$oid : timer._id;
+        const timerId = typeof timer._id === 'object' ? (timer._id.$oid || timer._id.toString()) : timer._id;
         const storageKey = `timer_start_${timerId}`;
         let startTime = localStorage.getItem(storageKey);
 
@@ -50,32 +166,30 @@
         const now = Date.now();
         const diff = endTime - now;
 
-        const clock = document.getElementById('countdown-clock');
         if (diff <= 0) {
           clock.innerHTML = "00:00:00";
-          root.style.transition = "opacity 0.5s ease";
           root.style.opacity = "0";
-          setTimeout(() => {
-            root.style.display = "none";
-          }, 500);
-
-          if (timer.timer_type === 'EVERGREEN') {
-            const timerId = typeof timer._id === 'object' ? timer._id.$oid : timer._id;
-            localStorage.removeItem(`timer_start_${timerId}`);
-          }
+          setTimeout(() => { wrapper.style.display = "none"; }, 500);
           return;
+        }
+
+        const THREE_MINUTES_MS = 3 * 60 * 1000;
+        if (diff <= THREE_MINUTES_MS && timer.urgency !== 'NONE') {
+          clock.classList.add(`urgency-${timer.urgency}`);
         }
 
         const h = Math.floor(diff / 3600000).toString().padStart(2, '0');
         const m = Math.floor((diff % 3600000) / 60000).toString().padStart(2, '0');
         const s = Math.floor((diff % 60000) / 1000).toString().padStart(2, '0');
+        
         clock.innerHTML = `${h}:${m}:${s}`;
-        requestAnimationFrame(updateClock); 
+        requestAnimationFrame(updateClock);
       };
 
       updateClock();
+
     } catch (e) {
-      console.error("Timer Widget Error:", e); 
+      console.error("Timer Widget Error:", e);
     }
   })();
 </script>
