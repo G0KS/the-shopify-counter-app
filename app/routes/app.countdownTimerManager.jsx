@@ -248,7 +248,6 @@ export default function CountdownTimerManager() {
                   borderRadius="base"
                   backgroundColor="surface"
                 >
-                  {/* Force Horizontal Layout with Flexbox */}
                   <div
                     style={{
                       display: "flex",
@@ -257,7 +256,6 @@ export default function CountdownTimerManager() {
                       width: "100%",
                     }}
                   >
-                    {/* LEFT SIDE: Info */}
                     <div style={{ flex: "1" }}>
                       <s-stack gap="tight">
                         <div
@@ -308,7 +306,6 @@ export default function CountdownTimerManager() {
                       </s-stack>
                     </div>
 
-                    {/* RIGHT SIDE: Actions */}
                     <div style={{ marginLeft: "16px" }}>
                       <s-button commandFor={menuId} variant="tertiary">
                         Actions
@@ -330,6 +327,12 @@ export default function CountdownTimerManager() {
                           Delete
                         </s-button>
                       </s-menu>
+
+                      <s-stack gap="tight" marginTop="base">
+                        <s-text>
+                          Impressions: {timer.analytics?.impressions || 0}
+                        </s-text>
+                      </s-stack>
                     </div>
                   </div>
                 </s-box>
@@ -338,7 +341,7 @@ export default function CountdownTimerManager() {
           ) : (
             <s-box padding="base" textAlign="center">
               <s-text tone="subdued">
-                No timers found matching "{searchQuery}"
+                No timers found matching "{searchQuery}" &quot
               </s-text>
             </s-box>
           )}

@@ -13,7 +13,6 @@ export const loader = async ({ request }) => {
   return { timer };
 };
 
-
 export default function Index() {
   const fetcher = useFetcher();
   const shopify = useAppBridge();
